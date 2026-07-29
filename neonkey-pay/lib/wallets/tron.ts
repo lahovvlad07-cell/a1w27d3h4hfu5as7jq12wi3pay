@@ -1,10 +1,7 @@
 import * as bip39 from 'bip39';
-import { BIP32Factory } from 'bip32';
-import * as ecc from 'tiny-secp256k1';
+import { HDKey } from '@scure/bip32';
 // @ts-expect-error — у tronweb нет собственных типов
 import TronWebPkg from 'tronweb';
-
-const bip32 = BIP32Factory(ecc);
 
 // TronWeb в CommonJS экспортируется по-разному в зависимости от версии/бандлера
 const TronWeb = (TronWebPkg as any).TronWeb || TronWebPkg;
@@ -28,9 +25,15 @@ export interface TronAccount {
 /**
  * Выводит TRON-аккаунт по индексу депозита из общей мнемоники.
  * Путь m/44'/195'/0'/0/{index} — 195 это coin type TRON (SLIP-44).
- * TRON использует ту же кривую secp256k1, что и Ethereum, поэтому
- * обычный BIP32 подходит — TronWeb только оборачивает приватный ключ
- * в свой формат адреса (base58, префикс "T").
+ * TRON использует ту же кривую secp256k1, что и Ethereum.
+ *
+ * ВАЖНО: раньше здесь использовались `bip32` + `tiny-secp256k1` — вторая
+ * библиотека грузит WASM-бинарник в рантайме, а Vercel serverless не
+ * всегда включает такие файлы в бандл функции (реальная ошибка была:
+ * "ENOENT: no such file or directory, open '.../secp256k1.wasm'").
+ * `@scure/bip32` делает то же самое (BIP32-деривация), но чистым JS без
+ * WASM/нативных бинарников — специально создан для таких сред, включая
+ * serverless. Формат путей деривации и результат идентичны.
  */
 export function deriveTronAccount(index: number): TronAccount {
   const mnemonic = process.env.TRON_HD_MNEMONIC;
@@ -38,8 +41,8 @@ export function deriveTronAccount(index: number): TronAccount {
   if (!Number.isInteger(index) || index < 0) throw new Error('Некорректный index деривации');
 
   const seed = bip39.mnemonicToSeedSync(mnemonic);
-  const root = bip32.fromSeed(seed);
-  const child = root.derivePath(`m/44'/195'/0'/0/${index}`);
+  const root = HDKey.fromMasterSeed(seed);
+  const child = root.derive(`m/44'/195'/0'/0/${index}`);
   if (!child.privateKey) throw new Error('Не удалось получить приватный ключ');
 
   const privateKeyHex = Buffer.from(child.privateKey).toString('hex');
