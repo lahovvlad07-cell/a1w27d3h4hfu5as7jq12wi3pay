@@ -56,6 +56,10 @@ export default function Home() {
   const [listError, setListError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<any>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
   useEffect(() => {
     const saved = window.localStorage.getItem('neonkey_pay_token');
     if (saved) {
@@ -130,6 +134,30 @@ export default function Home() {
     navigator.clipboard.writeText(addr);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function checkPayment(depositId: number) {
+    setChecking(true);
+    setCheckError(null);
+    setCheckResult(null);
+    try {
+      const res = await fetch('/api/payments/check', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-token': token,
+        },
+        body: JSON.stringify({ depositId, userId: Number(testUserId) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка проверки');
+      setCheckResult(data);
+      loadDeposits();
+    } catch (e: any) {
+      setCheckError(e.message);
+    } finally {
+      setChecking(false);
+    }
   }
 
   return (
@@ -233,6 +261,36 @@ export default function Home() {
                   {result.address}
                 </div>
                 {copied && <p className="muted" style={{ color: '#00ff88' }}>Скопировано ✓</p>}
+
+                <button
+                  className="btn full"
+                  style={{ marginTop: 12 }}
+                  onClick={() => checkPayment(result.depositId)}
+                  disabled={checking}
+                >
+                  {checking ? 'Проверяем блокчейн…' : '🔍 Проверить оплату'}
+                </button>
+                {checkError && <div className="error-box">⚠️ {checkError}</div>}
+                {checkResult && (
+                  <div className="result-box" style={{ marginTop: 10 }}>
+                    {checkResult.status === 'confirmed' && !checkResult.alreadyProcessed && (
+                      <p style={{ color: '#00ff88' }}>
+                        ✅ Оплата найдена (tx {checkResult.txHash}), баланс пользователя пополнен на {checkResult.creditedRub} ₽.
+                      </p>
+                    )}
+                    {checkResult.status === 'confirmed' && checkResult.alreadyProcessed && (
+                      <p style={{ color: '#00ff88' }}>✅ Уже подтверждён ранее.</p>
+                    )}
+                    {checkResult.status === 'pending' && checkResult.underpaid && (
+                      <p style={{ color: '#ffd700' }}>
+                        ⏳ Найден платёж на {checkResult.receivedAmount}, но этого недостаточно — ждём остальное.
+                      </p>
+                    )}
+                    {checkResult.status === 'pending' && !checkResult.underpaid && (
+                      <p className="muted">⏳ Платёж пока не найден в блокчейне. Попробуй ещё раз через минуту.</p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
