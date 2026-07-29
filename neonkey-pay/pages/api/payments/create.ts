@@ -1,12 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { validateTelegramInitData } from '@/lib/telegramAuth';
-import { getFixedRate, DepositCurrency } from '@/lib/rates';
+import { resolveAuthenticatedUser } from '@/lib/auth';
+import { calculatePricing } from '@/lib/pricing';
+import { DepositCurrency } from '@/lib/rates';
 import { deriveTronAccount } from '@/lib/wallets/tron';
 import { deriveTonAccount } from '@/lib/wallets/ton';
 
 const VALID_CURRENCIES: DepositCurrency[] = ['USDT_TRC20', 'TRX', 'TON'];
-const MIN_AMOUNT_RUB = 10;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
@@ -16,28 +16,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(500).json({ error: 'Сервер не настроен (Supabase)' });
   }
 
-  const { initData, currency, amountRub } = req.body || {};
-
-  // ВАЖНО: user_id берём только из провалидированной initData, а не из
-  // тела запроса — иначе кто угодно мог бы прислать чужой user_id и
-  // получить пополнение на чужой счёт.
-  const auth = validateTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN || '');
-  if (!auth.ok || !auth.user) {
-    return res.status(401).json({ error: auth.error || 'Не удалось подтвердить пользователя Telegram' });
+  const auth = resolveAuthenticatedUser(req);
+  if (!auth.ok || !auth.userId) {
+    return res.status(401).json({ error: auth.error || 'Не удалось подтвердить пользователя' });
   }
-  const userId = auth.user.id;
+  const userId = auth.userId;
 
+  const { currency, amountRub } = req.body || {};
   if (!VALID_CURRENCIES.includes(currency)) {
     return res.status(400).json({ error: `currency должен быть одним из: ${VALID_CURRENCIES.join(', ')}` });
   }
   const amount = Number(amountRub);
-  if (!amount || amount < MIN_AMOUNT_RUB) {
-    return res.status(400).json({ error: `Минимальная сумма пополнения — ${MIN_AMOUNT_RUB} ₽` });
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ error: 'amountRub должен быть положительным числом' });
   }
 
   try {
-    const rate = await getFixedRate(currency);
-    const expectedAmountCrypto = amount / rate;
+    const pricing = await calculatePricing(currency, amount);
+    if (amount < pricing.minAmountRub) {
+      return res.status(400).json({ error: `Минимальная сумма для ${currency} — ${pricing.minAmountRub} ₽` });
+    }
 
     // Шаг 1: создаём строку без адреса, чтобы получить id (он же — индекс деривации).
     const { data: inserted, error: insertError } = await supabaseAdmin
@@ -46,8 +44,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         user_id: userId,
         currency,
         amount_rub: amount,
-        rate_used: rate,
-        expected_amount_crypto: expectedAmountCrypto,
+        rate_used: pricing.rate,
+        commission_crypto: pricing.commissionCrypto,
+        gross_amount_crypto: pricing.grossAmountCrypto,
+        expected_amount_crypto: pricing.expectedAmountCrypto,
         status: 'pending',
       })
       .select('id')
@@ -86,8 +86,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       address,
       currency,
       amountRub: amount,
-      rateUsed: rate,
-      expectedAmountCrypto,
+      rateUsed: pricing.rate,
+      grossAmountCrypto: pricing.grossAmountCrypto,
+      commissionCrypto: pricing.commissionCrypto,
+      expectedAmountCrypto: pricing.expectedAmountCrypto,
+      viaInternalToken: auth.viaInternalToken || false,
     });
   } catch (e: any) {
     console.error('[create-payment] error:', e);

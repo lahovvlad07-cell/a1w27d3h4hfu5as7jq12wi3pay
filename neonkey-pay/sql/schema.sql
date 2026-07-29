@@ -10,14 +10,22 @@ create table if not exists deposits (
   address text,
   wallet_id bigint, -- только для TON (walletId), для TRON остаётся null
   amount_rub numeric not null,
-  rate_used numeric not null,           -- курс, зафиксированный в момент создания
-  expected_amount_crypto numeric not null, -- сколько крипты должно прийти
+  rate_used numeric not null,              -- курс, зафиксированный в момент создания
+  gross_amount_crypto numeric not null default 0, -- сумма по курсу, без комиссии
+  commission_crypto numeric not null default 0,   -- фиксированная комиссия сети сверху
+  expected_amount_crypto numeric not null, -- сколько крипты должно прийти (gross + commission)
   status text not null default 'pending'
     check (status in ('pending', 'confirmed', 'expired', 'swept')),
   tx_hash text,                          -- хэш входящей транзакции, когда найдена
   created_at timestamptz not null default now(),
   confirmed_at timestamptz
 );
+
+-- Если таблица уже была создана раньше (до появления комиссии) —
+-- этот блок безопасно доводит её до актуальной структуры повторным
+-- запуском файла.
+alter table deposits add column if not exists gross_amount_crypto numeric not null default 0;
+alter table deposits add column if not exists commission_crypto numeric not null default 0;
 
 create index if not exists deposits_status_idx on deposits (status);
 create index if not exists deposits_address_idx on deposits (address);
