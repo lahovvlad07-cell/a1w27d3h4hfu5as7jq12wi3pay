@@ -1,18 +1,19 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { resolveAuthenticatedUser } from '@/lib/auth';
-import { checkTronIncoming, checkTonIncoming } from '@/lib/blockchain';
+import { verifyDeposit } from '@/lib/verifyDeposit';
+import { applyCors } from '@/lib/cors';
 
 /**
  * Проверяет конкретный депозит (по id) на предмет входящего платежа.
- * Вызывается либо кнопкой "Проверить" из Mini App (после того как
- * пользователь нажал "Я оплатил"), либо позже — фоновым cron-воркером
- * для всех pending-депозитов сразу (см. README, шаг 2).
- *
- * Идемпотентно: если депозит уже не pending — просто возвращает текущий
- * статус, повторно блокчейн не дёргает и баланс повторно не начисляет.
+ * Вызывается кнопкой "Проверить" из Mini App — принудительно, сразу же,
+ * в отличие от фонового воркера (см. worker.ts), который делает то же
+ * самое раз в минуту для ВСЕХ pending-депозитов сразу, даже если Mini
+ * App закрыт. Сама логика подтверждения — в lib/verifyDeposit.ts,
+ * общая для обоих путей.
  */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Метод не поддерживается' });
   }
@@ -47,70 +48,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(403).json({ error: 'Этот депозит принадлежит другому пользователю' });
   }
 
-  if (deposit.status !== 'pending') {
-    return res.status(200).json({ status: deposit.status, alreadyProcessed: true });
-  }
-  if (!deposit.address) {
-    return res.status(409).json({ error: 'У депозита ещё не сгенерирован адрес' });
-  }
-
   try {
-    const result = deposit.currency === 'TON'
-      ? await checkTonIncoming(deposit.address, Number(deposit.expected_amount_crypto))
-      : await checkTronIncoming(deposit.address, deposit.currency === 'USDT_TRC20', Number(deposit.expected_amount_crypto));
-
-    if (!result.found) {
-      return res.status(200).json({
-        status: 'pending',
-        found: false,
-        underpaid: result.underpaid || false,
-        receivedAmount: result.receivedAmount ?? null,
-      });
+    const result = await verifyDeposit(deposit);
+    if (result.error && result.status === 'pending') {
+      return res.status(500).json({ error: result.error });
     }
-
-    // Атомарно переводим депозит в confirmed, но ТОЛЬКО если он всё ещё
-    // pending — .eq('status', 'pending') здесь защищает от гонки, если
-    // ручная кнопка и cron-воркер сработали одновременно на один и тот
-    // же депозит: второй вызов просто не найдёт строку для обновления.
-    const { data: updated, error: updateError } = await supabaseAdmin
-      .from('deposits')
-      .update({ status: 'confirmed', tx_hash: result.txHash, confirmed_at: new Date().toISOString() })
-      .eq('id', depositId)
-      .eq('status', 'pending')
-      .select()
-      .maybeSingle();
-
-    if (updateError) {
-      throw new Error(updateError.message);
-    }
-    if (!updated) {
-      // Кто-то другой (параллельный вызов) уже успел подтвердить этот
-      // депозит между нашим select и update — баланс уже начислен им,
-      // начислять второй раз не нужно.
-      return res.status(200).json({ status: 'confirmed', alreadyProcessed: true });
-    }
-
-    const { error: creditError } = await supabaseAdmin.rpc('increment_balance', {
-      p_user_id: deposit.user_id,
-      p_amount: Number(deposit.amount_rub),
-    });
-
-    if (creditError) {
-      // Депозит уже помечен confirmed, но баланс не начислен — это надо
-      // разрулить руками (см. tx_hash в ответе), не откатываем статус
-      // автоматически, чтобы не потерять факт найденного платежа.
-      console.error('[check-payment] баланс не начислен:', creditError);
-      return res.status(500).json({
-        error: `Платёж найден (tx ${result.txHash}), но начислить баланс не удалось: ${creditError.message}. Начисли вручную.`,
-        txHash: result.txHash,
-      });
-    }
-
     return res.status(200).json({
-      status: 'confirmed',
-      txHash: result.txHash,
+      status: result.status,
+      found: result.found,
+      underpaid: result.underpaid,
       receivedAmount: result.receivedAmount,
-      creditedRub: deposit.amount_rub,
+      txHash: result.txHash,
+      alreadyProcessed: result.alreadyProcessed,
+      creditedRub: result.status === 'confirmed' ? deposit.amount_rub : undefined,
+      error: result.status === 'confirmed' ? result.error : undefined, // ошибка начисления баланса после confirmed
     });
   } catch (e: any) {
     console.error('[check-payment] error:', e);

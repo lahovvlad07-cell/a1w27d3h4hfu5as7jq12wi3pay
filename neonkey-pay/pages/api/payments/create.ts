@@ -5,10 +5,13 @@ import { calculatePricing } from '@/lib/pricing';
 import { DepositCurrency } from '@/lib/rates';
 import { deriveTronAccount } from '@/lib/wallets/tron';
 import { deriveTonAccount } from '@/lib/wallets/ton';
+import { DEPOSIT_EXPIRY_MINUTES } from '@/lib/depositExpiry';
+import { applyCors } from '@/lib/cors';
 
 const VALID_CURRENCIES: DepositCurrency[] = ['USDT_TRC20', 'TRX', 'TON'];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (applyCors(req, res)) return;
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Метод не поддерживается' });
   }
@@ -89,7 +92,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       rateUsed: pricing.rate,
       grossAmountCrypto: pricing.grossAmountCrypto,
       commissionCrypto: pricing.commissionCrypto,
+      commissionRub: pricing.commissionRub,
       expectedAmountCrypto: pricing.expectedAmountCrypto,
+      expiresInMinutes: DEPOSIT_EXPIRY_MINUTES,
       viaInternalToken: auth.viaInternalToken || false,
     });
   } catch (e: any) {
