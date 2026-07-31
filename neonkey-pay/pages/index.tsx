@@ -60,6 +60,12 @@ export default function Home() {
   const [checkResult, setCheckResult] = useState<any>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
 
+  const [treasury, setTreasury] = useState<any>(null);
+  const [treasuryError, setTreasuryError] = useState<string | null>(null);
+  const [treasuryLoading, setTreasuryLoading] = useState(false);
+  const [sweepingId, setSweepingId] = useState<number | null>(null);
+  const [sweepMessage, setSweepMessage] = useState<string | null>(null);
+
   useEffect(() => {
     const saved = window.localStorage.getItem('neonkey_pay_token');
     if (saved) {
@@ -69,7 +75,10 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (tokenSaved) loadDeposits();
+    if (tokenSaved) {
+      loadDeposits();
+      loadTreasury();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenSaved]);
 
@@ -136,6 +145,50 @@ export default function Home() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function loadTreasury() {
+    setTreasuryLoading(true);
+    setTreasuryError(null);
+    try {
+      const res = await fetch('/api/payments/treasury', {
+        headers: { 'x-internal-token': token },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка загрузки казначейства');
+      setTreasury(data);
+    } catch (e: any) {
+      setTreasuryError(e.message);
+    } finally {
+      setTreasuryLoading(false);
+    }
+  }
+
+  async function sweepNow(depositId: number) {
+    setSweepingId(depositId);
+    setSweepMessage(null);
+    try {
+      const res = await fetch('/api/payments/sweep', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-token': token,
+        },
+        body: JSON.stringify({ depositId }),
+      });
+      const data = await res.json();
+      if (data.swept) {
+        setSweepMessage(`✅ Депозит #${depositId} свипнут (tx ${data.txHash})`);
+      } else {
+        setSweepMessage(`⚠️ Депозит #${depositId}: ${data.error || 'свип не удался'}`);
+      }
+      loadDeposits();
+      loadTreasury();
+    } catch (e: any) {
+      setSweepMessage(`⚠️ Депозит #${depositId}: ${e.message}`);
+    } finally {
+      setSweepingId(null);
+    }
+  }
+
   async function checkPayment(depositId: number) {
     setChecking(true);
     setCheckError(null);
@@ -192,6 +245,46 @@ export default function Home() {
         </div>
       ) : (
         <>
+          <div className="card">
+            <h2>
+              🏦 Казначейство
+              <button className="btn secondary" style={{ marginLeft: 'auto', padding: '6px 12px', fontSize: 12 }} onClick={loadTreasury}>
+                ⟳ Обновить
+              </button>
+            </h2>
+            <p className="muted">
+              Это адреса с индексом деривации 0 — они никогда не выдаются депозитам
+              (id начинается с 1), поэтому безопасно используются как казначейский
+              кошелёк для того же seed. Именно сюда свипаются подтверждённые платежи.
+            </p>
+            {treasuryLoading && <p className="muted">Загрузка…</p>}
+            {treasuryError && <div className="error-box">⚠️ {treasuryError}</div>}
+            {treasury && (
+              <>
+                <p className="muted" style={{ marginBottom: 4 }}>TRON (USDT/TRX):</p>
+                <div className="address-box" onClick={() => copyAddress(treasury.tron.address)}>
+                  {treasury.tron.address}
+                </div>
+                <div className="result-row">
+                  <span>Баланс TRX</span>
+                  <strong>{treasury.tron.trxBalance !== null ? treasury.tron.trxBalance.toFixed(4) : '—'}</strong>
+                </div>
+                <div className="result-row">
+                  <span>Баланс USDT</span>
+                  <strong>{treasury.tron.usdtBalance !== null ? treasury.tron.usdtBalance.toFixed(4) : '—'}</strong>
+                </div>
+                <p className="muted" style={{ margin: '14px 0 4px' }}>TON:</p>
+                <div className="address-box" onClick={() => copyAddress(treasury.ton.address)}>
+                  {treasury.ton.address}
+                </div>
+                <div className="result-row">
+                  <span>Баланс TON</span>
+                  <strong>{treasury.ton.tonBalance !== null ? treasury.ton.tonBalance.toFixed(4) : '—'}</strong>
+                </div>
+              </>
+            )}
+          </div>
+
           <div className="card">
             <h2>🧪 Тестовое создание платежа</h2>
             <p className="muted">
@@ -304,6 +397,7 @@ export default function Home() {
             </h2>
             {listLoading && <p className="muted">Загрузка…</p>}
             {listError && <div className="error-box">⚠️ {listError}</div>}
+            {sweepMessage && <div className="result-box" style={{ marginBottom: 10 }}><p className="muted">{sweepMessage}</p></div>}
             {!listLoading && deposits && deposits.length === 0 && (
               <div className="empty">Пока нет ни одного депозита</div>
             )}
@@ -317,6 +411,7 @@ export default function Home() {
                     <th>К оплате</th>
                     <th>Адрес</th>
                     <th>Статус</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -328,6 +423,18 @@ export default function Home() {
                       <td>{Number(d.expected_amount_crypto).toFixed(4)}</td>
                       <td className="mono" title={d.address || ''}>{d.address || '—'}</td>
                       <td><span className={`badge ${d.status}`}>{STATUS_LABEL[d.status]}</span></td>
+                      <td>
+                        {d.status === 'confirmed' && (
+                          <button
+                            className="btn secondary"
+                            style={{ padding: '5px 10px', fontSize: 12 }}
+                            onClick={() => sweepNow(d.id)}
+                            disabled={sweepingId === d.id}
+                          >
+                            {sweepingId === d.id ? '…' : '📤 Свипнуть'}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

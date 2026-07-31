@@ -16,16 +16,18 @@ create table if not exists deposits (
   expected_amount_crypto numeric not null, -- сколько крипты должно прийти (gross + commission)
   status text not null default 'pending'
     check (status in ('pending', 'confirmed', 'expired', 'swept')),
-  tx_hash text,                          -- хэш входящей транзакции, когда найдена
+  tx_hash text,                          -- хэш входящей транзакции (оплата от пользователя)
+  sweep_tx_hash text,                    -- хэш/метка исходящей транзакции свипа на казначейский кошелёк
   created_at timestamptz not null default now(),
   confirmed_at timestamptz
 );
 
--- Если таблица уже была создана раньше (до появления комиссии) —
+-- Если таблица уже была создана раньше (до появления комиссии/свипа) —
 -- этот блок безопасно доводит её до актуальной структуры повторным
 -- запуском файла.
 alter table deposits add column if not exists gross_amount_crypto numeric not null default 0;
 alter table deposits add column if not exists commission_crypto numeric not null default 0;
+alter table deposits add column if not exists sweep_tx_hash text;
 
 create index if not exists deposits_status_idx on deposits (status);
 create index if not exists deposits_address_idx on deposits (address);

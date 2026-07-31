@@ -1,5 +1,7 @@
 import { supabaseAdmin } from './supabaseAdmin';
 import { checkTronIncoming, checkTonIncoming } from './blockchain';
+import { DEPOSIT_EXPIRY_MINUTES } from './depositExpiry';
+import { sweepDeposit } from './sweep';
 
 export interface VerifyResult {
   status: 'pending' | 'confirmed' | 'expired';
@@ -19,6 +21,14 @@ export interface VerifyResult {
  * раз в минуту, по всем pending сразу) — чтобы логика подтверждения
  * платежа существовала в одном месте и не могла разъехаться.
  *
+ * ВАЖНО: раньше просрочку (`expired`) проставлял только worker.ts по
+ * cron — если cron-job.org не настроен или перестал стучаться, депозит
+ * молча вис в pending вечно (клиент при этом мог визуально показывать
+ * "истёк" по локальному таймеру, но в базе статус не менялся). Теперь
+ * сама verifyDeposit() тоже проверяет возраст депозита и просрочивает
+ * его при любом вызове — то есть это работает даже если воркер вообще
+ * не запущен, просто с задержкой до следующего нажатия "Проверить".
+ *
  * Идемпотентно: если депозит уже не pending — просто возвращает текущий
  * статус, повторно блокчейн не дёргает и баланс повторно не начисляет.
  */
@@ -30,6 +40,23 @@ export async function verifyDeposit(deposit: any): Promise<VerifyResult> {
   }
   if (!deposit.address) {
     return { status: 'pending', error: 'У депозита ещё не сгенерирован адрес' };
+  }
+
+  const ageMs = Date.now() - new Date(deposit.created_at).getTime();
+  if (ageMs > DEPOSIT_EXPIRY_MINUTES * 60 * 1000) {
+    // Атомарно, с тем же паттерном .eq('status','pending'), что и ниже
+    // при confirmed — если воркер и кнопка "Проверить" одновременно
+    // наткнулись на один и тот же просроченный депозит, второй вызов
+    // просто не найдёт строку для обновления.
+    const { data: expiredRow } = await supabaseAdmin
+      .from('deposits')
+      .update({ status: 'expired' })
+      .eq('id', deposit.id)
+      .eq('status', 'pending')
+      .select()
+      .maybeSingle();
+
+    return { status: 'expired', alreadyProcessed: !expiredRow };
   }
 
   const result = deposit.currency === 'TON'
@@ -81,6 +108,20 @@ export async function verifyDeposit(deposit: any): Promise<VerifyResult> {
       error: `Платёж найден (tx ${result.txHash}), но начислить баланс не удалось: ${creditError.message}. Начисли вручную.`,
       txHash: result.txHash,
     };
+  }
+
+  // Баланс уже начислен — теперь пробуем сразу увести деньги с
+  // одноразового адреса на казначейский кошелёк. Делаем это здесь же
+  // (синхронно), а не "в фоне без ожидания", чтобы неудачный свип не
+  // потерялся молча — но ошибка свипа НИКОГДА не влияет на статус
+  // 'confirmed', который уже вернулся пользователю: баланс начислен,
+  // депозит подтверждён, а свип — это уже внутренняя операционная
+  // задача, которую при необходимости можно повторить вручную из
+  // дашборда (см. pages/api/payments/sweep.ts).
+  const updatedDeposit = { ...deposit, status: 'confirmed' };
+  const sweepResult = await sweepDeposit(updatedDeposit).catch((e) => ({ swept: false, error: e.message || String(e) }));
+  if (!sweepResult.swept) {
+    console.error(`[verifyDeposit] депозит ${deposit.id} подтверждён, но свип не удался:`, sweepResult.error);
   }
 
   return {
