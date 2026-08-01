@@ -5,7 +5,7 @@ import { calculatePricing } from '@/lib/pricing';
 import { DepositCurrency } from '@/lib/rates';
 import { deriveTronAccount } from '@/lib/wallets/tron';
 import { deriveTonAccount } from '@/lib/wallets/ton';
-import { DEPOSIT_EXPIRY_MINUTES } from '@/lib/depositExpiry';
+import { DEPOSIT_EXPIRY_MINUTES, expireStaleDeposits } from '@/lib/depositExpiry';
 import { applyCors } from '@/lib/cors';
 
 const VALID_CURRENCIES: DepositCurrency[] = ['USDT_TRC20', 'TRX', 'TON'];
@@ -35,6 +35,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(401).json({ error: auth.error || 'Не удалось подтвердить пользователя' });
   }
   const userId = auth.userId;
+
+  // Побочным эффектом чистим старые "зависшие" pending-депозиты (см.
+  // lib/depositExpiry.ts) — не блокирует создание нового платежа, ошибка
+  // здесь никогда не мешает основному запросу.
+  await expireStaleDeposits();
 
   const { currency, amountRub } = req.body || {};
   if (!VALID_CURRENCIES.includes(currency)) {

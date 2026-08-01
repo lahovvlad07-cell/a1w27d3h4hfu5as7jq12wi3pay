@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { checkInternalToken } from '@/lib/auth';
+import { expireStaleDeposits } from '@/lib/depositExpiry';
 
 // Даём функции больше времени на холодный старт (загрузка tronweb/
 // bip39/bip32/tiny-secp256k1(WASM) + сетевые запросы к TronGrid/TonCenter/
@@ -25,6 +26,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const limit = Math.min(Number(req.query.limit) || 20, 100);
+
+  // Побочным эффектом чистим старые "зависшие" pending-депозиты — дашборд
+  // открывают вручную и регулярно, так что это ещё один надёжный триггер
+  // просрочки, независимый от внешнего cron (см. lib/depositExpiry.ts).
+  await expireStaleDeposits();
 
   const { data, error } = await supabaseAdmin
     .from('deposits')
