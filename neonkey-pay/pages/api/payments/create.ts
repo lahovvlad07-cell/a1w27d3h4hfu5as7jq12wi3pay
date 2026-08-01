@@ -5,10 +5,12 @@ import { calculatePricing } from '@/lib/pricing';
 import { DepositCurrency } from '@/lib/rates';
 import { deriveTronAccount } from '@/lib/wallets/tron';
 import { deriveTonAccount } from '@/lib/wallets/ton';
+import { createCryptoBotInvoice } from '@/lib/providers/cryptobot';
+import { createXRocketInvoice } from '@/lib/providers/xrocket';
 import { DEPOSIT_EXPIRY_MINUTES, expireStaleDeposits } from '@/lib/depositExpiry';
 import { applyCors } from '@/lib/cors';
 
-const VALID_CURRENCIES: DepositCurrency[] = ['USDT_TRC20', 'TRX', 'TON'];
+const VALID_CURRENCIES: DepositCurrency[] = ['USDT_TRC20', 'TRX', 'TON', 'CRYPTOBOT', 'XROCKET'];
 
 // Даём функции больше времени на холодный старт (загрузка tronweb/
 // bip39/bip32/tiny-secp256k1(WASM) + сетевые запросы к TronGrid/TonCenter/
@@ -77,23 +79,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
     const depositId = inserted.id as number;
 
-    // Шаг 2: по id выводим адрес и сохраняем его в ту же строку.
-    let address: string;
+    // Шаг 2а (USDT_TRC20/TRX/TON): выводим одноразовый адрес по id.
+    // Шаг 2б (CRYPTOBOT/XROCKET): создаём инвойс у провайдера — вместо
+    // адреса пользователь получает ссылку на оплату (pay_url).
+    let address: string | null = null;
     let walletId: number | null = null;
+    let invoiceId: string | null = null;
+    let payUrl: string | null = null;
 
     if (currency === 'TON') {
       const account = await deriveTonAccount(depositId);
       address = account.address;
       walletId = account.walletId;
-    } else {
+    } else if (currency === 'USDT_TRC20' || currency === 'TRX') {
       // USDT_TRC20 и TRX — один и тот же TRON-адрес
       const account = deriveTronAccount(depositId);
       address = account.address;
+    } else if (currency === 'CRYPTOBOT') {
+      const invoice = await createCryptoBotInvoice(
+        pricing.expectedAmountCrypto,
+        `deposit:${depositId}`,
+        DEPOSIT_EXPIRY_MINUTES * 60
+      );
+      invoiceId = invoice.invoiceId;
+      payUrl = invoice.payUrl;
+    } else {
+      // XROCKET
+      const invoice = await createXRocketInvoice(
+        pricing.expectedAmountCrypto,
+        `deposit:${depositId}`,
+        DEPOSIT_EXPIRY_MINUTES * 60
+      );
+      invoiceId = invoice.invoiceId;
+      payUrl = invoice.payUrl;
     }
 
     const { error: updateError } = await supabaseAdmin
       .from('deposits')
-      .update({ address, wallet_id: walletId })
+      .update({ address, wallet_id: walletId, invoice_id: invoiceId, pay_url: payUrl })
       .eq('id', depositId);
 
     if (updateError) {
@@ -103,6 +126,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({
       depositId,
       address,
+      payUrl,
       currency,
       amountRub: amount,
       rateUsed: pricing.rate,

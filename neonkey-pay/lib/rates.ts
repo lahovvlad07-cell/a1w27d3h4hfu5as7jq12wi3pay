@@ -1,11 +1,13 @@
 import { supabaseAdmin } from './supabaseAdmin';
 
-export type DepositCurrency = 'USDT_TRC20' | 'TRX' | 'TON';
+export type DepositCurrency = 'USDT_TRC20' | 'TRX' | 'TON' | 'CRYPTOBOT' | 'XROCKET';
 
 const RATE_KEY_BY_CURRENCY: Record<DepositCurrency, string> = {
   USDT_TRC20: 'usdt_rate',
   TRX: 'trx_rate',
   TON: 'ton_rate',
+  CRYPTOBOT: 'cryptobot_rate',
+  XROCKET: 'xrocket_rate',
 };
 
 // Суффикс ключей settings для комиссии/минималки — совпадает с тем, что
@@ -15,15 +17,22 @@ const SETTINGS_SUFFIX_BY_CURRENCY: Record<DepositCurrency, string> = {
   USDT_TRC20: 'usdt',
   TRX: 'trx',
   TON: 'ton',
+  CRYPTOBOT: 'cryptobot',
+  XROCKET: 'xrocket',
 };
 
 // Дефолты — используются только если в таблице settings ещё нет
 // соответствующей строки (например, админ ни разу не открывал форму
 // комиссии). Совпадают с DEFAULT_SETTINGS в основном вебаппе.
+// CRYPTOBOT/XROCKET по умолчанию выставляют счёт в USDT (см.
+// lib/providers/*.ts), поэтому их курс по умолчанию равен курсу USDT —
+// но это отдельная настройка, можно развести значения независимо.
 const FALLBACK: Record<DepositCurrency, { rate: number; commissionType: 0 | 1; commissionValue: number; minAmountRub: number }> = {
   USDT_TRC20: { rate: 90, commissionType: 0, commissionValue: 250, minAmountRub: 3000 },
   TRX: { rate: 15, commissionType: 0, commissionValue: 15, minAmountRub: 10 },
   TON: { rate: 700, commissionType: 0, commissionValue: 0, minAmountRub: 10 },
+  CRYPTOBOT: { rate: 90, commissionType: 0, commissionValue: 0, minAmountRub: 100 },
+  XROCKET: { rate: 90, commissionType: 0, commissionValue: 0, minAmountRub: 100 },
 };
 
 export interface DepositSettings {

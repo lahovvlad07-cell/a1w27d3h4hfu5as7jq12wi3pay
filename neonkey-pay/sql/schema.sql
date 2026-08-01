@@ -6,9 +6,11 @@
 create table if not exists deposits (
   id bigserial primary key,
   user_id bigint not null,
-  currency text not null check (currency in ('USDT_TRC20', 'TRX', 'TON')),
+  currency text not null check (currency in ('USDT_TRC20', 'TRX', 'TON', 'CRYPTOBOT', 'XROCKET')),
   address text,
   wallet_id bigint, -- только для TON (walletId), для TRON остаётся null
+  invoice_id text,  -- только для CRYPTOBOT/XROCKET — id инвойса у провайдера
+  pay_url text,     -- только для CRYPTOBOT/XROCKET — ссылка на оплату инвойса
   amount_rub numeric not null,
   rate_used numeric not null,              -- курс, зафиксированный в момент создания
   gross_amount_crypto numeric not null default 0, -- сумма по курсу, без комиссии
@@ -22,12 +24,26 @@ create table if not exists deposits (
   confirmed_at timestamptz
 );
 
--- Если таблица уже была создана раньше (до появления комиссии/свипа) —
--- этот блок безопасно доводит её до актуальной структуры повторным
--- запуском файла.
+-- Если таблица уже была создана раньше (до появления комиссии/свипа/
+-- CryptoBot/xRocket) — этот блок безопасно доводит её до актуальной
+-- структуры повторным запуском файла.
 alter table deposits add column if not exists gross_amount_crypto numeric not null default 0;
 alter table deposits add column if not exists commission_crypto numeric not null default 0;
 alter table deposits add column if not exists sweep_tx_hash text;
+alter table deposits add column if not exists invoice_id text;
+alter table deposits add column if not exists pay_url text;
+
+-- Расширяем check-constraint на currency, если таблица создавалась ДО
+-- появления CRYPTOBOT/XROCKET (когда create table if not exists выше
+-- уже не сработает на старую таблицу со старым constraint'ом).
+do $$
+begin
+  alter table deposits drop constraint if exists deposits_currency_check;
+  alter table deposits add constraint deposits_currency_check
+    check (currency in ('USDT_TRC20', 'TRX', 'TON', 'CRYPTOBOT', 'XROCKET'));
+exception when others then
+  raise notice 'Не удалось обновить deposits_currency_check: %', SQLERRM;
+end $$;
 
 create index if not exists deposits_status_idx on deposits (status);
 create index if not exists deposits_address_idx on deposits (address);

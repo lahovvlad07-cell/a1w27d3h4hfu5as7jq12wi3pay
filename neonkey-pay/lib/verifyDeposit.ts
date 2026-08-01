@@ -1,5 +1,7 @@
 import { supabaseAdmin } from './supabaseAdmin';
 import { checkTronIncoming, checkTonIncoming } from './blockchain';
+import { checkCryptoBotInvoice } from './providers/cryptobot';
+import { checkXRocketInvoice } from './providers/xrocket';
 import { DEPOSIT_EXPIRY_MINUTES } from './depositExpiry';
 import { sweepDeposit } from './sweep';
 
@@ -38,8 +40,12 @@ export async function verifyDeposit(deposit: any): Promise<VerifyResult> {
   if (deposit.status !== 'pending') {
     return { status: deposit.status, alreadyProcessed: true };
   }
-  if (!deposit.address) {
+  const isInvoiceBased = deposit.currency === 'CRYPTOBOT' || deposit.currency === 'XROCKET';
+  if (!isInvoiceBased && !deposit.address) {
     return { status: 'pending', error: 'У депозита ещё не сгенерирован адрес' };
+  }
+  if (isInvoiceBased && !deposit.invoice_id) {
+    return { status: 'pending', error: 'У депозита ещё не создан инвойс' };
   }
 
   const ageMs = Date.now() - new Date(deposit.created_at).getTime();
@@ -59,9 +65,25 @@ export async function verifyDeposit(deposit: any): Promise<VerifyResult> {
     return { status: 'expired', alreadyProcessed: !expiredRow };
   }
 
-  const result = deposit.currency === 'TON'
-    ? await checkTonIncoming(deposit.address, Number(deposit.expected_amount_crypto))
-    : await checkTronIncoming(deposit.address, deposit.currency === 'USDT_TRC20', Number(deposit.expected_amount_crypto));
+  let result: { found: boolean; txHash?: string; receivedAmount?: number | null; underpaid?: boolean };
+
+  if (deposit.currency === 'TON') {
+    result = await checkTonIncoming(deposit.address, Number(deposit.expected_amount_crypto));
+  } else if (deposit.currency === 'CRYPTOBOT' || deposit.currency === 'XROCKET') {
+    // Инвойс либо оплачен целиком, либо нет — частичной оплаты у этих
+    // провайдеров не бывает (в отличие от блокчейн-адресов, куда в
+    // теории можно прислать любую сумму), поэтому underpaid всегда false.
+    const status = deposit.currency === 'CRYPTOBOT'
+      ? await checkCryptoBotInvoice(deposit.invoice_id)
+      : await checkXRocketInvoice(deposit.invoice_id);
+    result = {
+      found: status.status === 'paid',
+      txHash: deposit.invoice_id, // у инвойсов нет отдельного хэша транзакции — используем id инвойса
+      receivedAmount: status.paidAmount ?? null,
+    };
+  } else {
+    result = await checkTronIncoming(deposit.address, deposit.currency === 'USDT_TRC20', Number(deposit.expected_amount_crypto));
+  }
 
   if (!result.found) {
     return {

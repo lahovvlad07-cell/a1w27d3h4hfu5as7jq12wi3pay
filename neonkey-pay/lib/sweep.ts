@@ -51,7 +51,15 @@ export async function sweepDeposit(deposit: any): Promise<SweepResult> {
   try {
     let txHash: string;
 
-    if (deposit.currency === 'TON') {
+    if (deposit.currency === 'CRYPTOBOT' || deposit.currency === 'XROCKET') {
+      // Деньги уже лежат в кастодиальном балансе провайдера (CryptoBot/
+      // xRocket) — в отличие от TRON/TON здесь нет одноразового адреса,
+      // с которого нужно куда-то переводить средства. "Свип" тут просто
+      // фиксирует финальный статус, реального перевода не происходит.
+      // Вывод из самого CryptoBot/xRocket в рубли/другую крипту делается
+      // вручную из соответствующего бота, это уже вне зоны этого сервиса.
+      txHash = 'provider-custody';
+    } else if (deposit.currency === 'TON') {
       const master = await getMasterTonAccount();
       const result = await sweepAllTon(deposit.id, master.address);
       txHash = result.label;

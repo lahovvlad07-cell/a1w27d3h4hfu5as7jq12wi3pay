@@ -1,16 +1,19 @@
 import { useEffect, useState, FormEvent } from 'react';
 
-type Currency = 'USDT_TRC20' | 'TRX' | 'TON';
+type Currency = 'USDT_TRC20' | 'TRX' | 'TON' | 'CRYPTOBOT' | 'XROCKET';
 
 const CURRENCY_LABEL: Record<Currency, string> = {
   USDT_TRC20: 'USDT (TRC-20)',
   TRX: 'TRX',
   TON: 'TON',
+  CRYPTOBOT: 'CryptoBot',
+  XROCKET: 'xRocket',
 };
 
 interface CreateResult {
   depositId: number;
-  address: string;
+  address: string | null;
+  payUrl?: string | null;
   currency: Currency;
   amountRub: number;
   rateUsed: number;
@@ -24,6 +27,7 @@ interface Deposit {
   user_id: number;
   currency: Currency;
   address: string | null;
+  pay_url?: string | null;
   amount_rub: number;
   rate_used: number;
   commission_crypto: number;
@@ -300,6 +304,8 @@ export default function Home() {
                     <option value="USDT_TRC20">USDT (TRC-20)</option>
                     <option value="TRX">TRX</option>
                     <option value="TON">TON</option>
+                    <option value="CRYPTOBOT">CryptoBot</option>
+                    <option value="XROCKET">xRocket</option>
                   </select>
                 </div>
                 <div className="field">
@@ -349,11 +355,22 @@ export default function Home() {
                   <span>Итого к отправке</span>
                   <strong>{result.expectedAmountCrypto.toFixed(6)} {result.currency === 'USDT_TRC20' ? 'USDT' : result.currency}</strong>
                 </div>
-                <p className="muted" style={{ marginTop: 10, marginBottom: 4 }}>Адрес (нажми, чтобы скопировать):</p>
-                <div className="address-box" onClick={() => copyAddress(result.address)}>
-                  {result.address}
-                </div>
-                {copied && <p className="muted" style={{ color: '#00ff88' }}>Скопировано ✓</p>}
+                {result.address ? (
+                  <>
+                    <p className="muted" style={{ marginTop: 10, marginBottom: 4 }}>Адрес (нажми, чтобы скопировать):</p>
+                    <div className="address-box" onClick={() => copyAddress(result.address as string)}>
+                      {result.address}
+                    </div>
+                    {copied && <p className="muted" style={{ color: '#00ff88' }}>Скопировано ✓</p>}
+                  </>
+                ) : (
+                  <>
+                    <p className="muted" style={{ marginTop: 10, marginBottom: 4 }}>Ссылка на оплату инвойса:</p>
+                    <div className="address-box">
+                      {result.payUrl ? <a href={result.payUrl} target="_blank" rel="noreferrer">{result.payUrl}</a> : '—'}
+                    </div>
+                  </>
+                )}
 
                 <button
                   className="btn full"
@@ -421,7 +438,7 @@ export default function Home() {
                       <td>{CURRENCY_LABEL[d.currency]}</td>
                       <td>{d.amount_rub} ₽</td>
                       <td>{Number(d.expected_amount_crypto).toFixed(4)}</td>
-                      <td className="mono" title={d.address || ''}>{d.address || '—'}</td>
+                      <td className="mono" title={d.address || d.pay_url || ''}>{d.address || d.pay_url || '—'}</td>
                       <td><span className={`badge ${d.status}`}>{STATUS_LABEL[d.status]}</span></td>
                       <td>
                         {d.status === 'confirmed' && (
