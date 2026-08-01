@@ -1,7 +1,6 @@
 import { mnemonicToPrivateKey } from '@ton/crypto';
 import { WalletContractV4, TonClient, internal } from '@ton/ton';
 import { Address } from '@ton/core';
-import { tonCenterBase } from '../network';
 
 export interface TonAccount {
   address: string;
@@ -57,10 +56,7 @@ let tonClientInstance: TonClient | null = null;
 function getTonClient(): TonClient {
   if (tonClientInstance) return tonClientInstance;
   tonClientInstance = new TonClient({
-    endpoint: `${tonCenterBase()}/api/v2/jsonRPC`,
-    // На testnet.toncenter.com можно стучаться и без ключа (более щедрые
-    // лимиты, чем на мейннете), но если задан TONCENTER_API_KEY — всё равно
-    // передаём его, это не мешает.
+    endpoint: 'https://toncenter.com/api/v2/jsonRPC',
     apiKey: process.env.TONCENTER_API_KEY,
   });
   return tonClientInstance;

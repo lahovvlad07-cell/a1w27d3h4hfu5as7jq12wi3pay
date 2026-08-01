@@ -4,12 +4,9 @@
 // историю транзакций конкретного адреса, поэтому отдельного вебхука не
 // нужно (см. README про polling вместо push-уведомлений). Прежде чем
 // доверять этому реальными деньгами — обязательно прогони весь цикл на
-// тестнете (Nile для TRON, testnet для TON) — переключается через
-// TRON_NETWORK=nile / TON_NETWORK=testnet в .env, см. lib/network.ts.
+// тестнете (Nile для TRON, testnet для TON), как написано в README.
 
-import { tronFullHost, tonCenterBase, usdtTrc20Contract } from './network';
-
-const USDT_TRC20_CONTRACT = usdtTrc20Contract();
+const USDT_TRC20_CONTRACT = process.env.USDT_TRC20_CONTRACT || 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
 
 export interface IncomingCheckResult {
   found: boolean;
@@ -32,8 +29,8 @@ export async function checkTronIncoming(
   const headers: Record<string, string> = apiKey ? { 'TRON-PRO-API-KEY': apiKey } : {};
 
   const url = isUsdt
-    ? `${tronFullHost()}/v1/accounts/${address}/transactions/trc20?contract_address=${USDT_TRC20_CONTRACT}&only_to=true&limit=20`
-    : `${tronFullHost()}/v1/accounts/${address}/transactions?only_to=true&limit=20`;
+    ? `https://api.trongrid.io/v1/accounts/${address}/transactions/trc20?contract_address=${USDT_TRC20_CONTRACT}&only_to=true&limit=20`
+    : `https://api.trongrid.io/v1/accounts/${address}/transactions?only_to=true&limit=20`;
 
   const res = await fetch(url, { headers });
   if (!res.ok) {
@@ -85,7 +82,7 @@ export async function checkTonIncoming(
   expectedAmountCrypto: number
 ): Promise<IncomingCheckResult> {
   const apiKey = process.env.TONCENTER_API_KEY;
-  const url = `${tonCenterBase()}/api/v2/getTransactions?address=${encodeURIComponent(address)}&limit=20${apiKey ? `&api_key=${apiKey}` : ''}`;
+  const url = `https://toncenter.com/api/v2/getTransactions?address=${encodeURIComponent(address)}&limit=20${apiKey ? `&api_key=${apiKey}` : ''}`;
 
   const res = await fetch(url);
   if (!res.ok) {
