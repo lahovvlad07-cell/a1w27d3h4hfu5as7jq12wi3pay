@@ -2,6 +2,7 @@ import * as bip39 from 'bip39';
 import { HDKey } from '@scure/bip32';
 // @ts-expect-error — у tronweb нет собственных типов
 import TronWebPkg from 'tronweb';
+import { tronFullHost, usdtTrc20Contract } from '../network';
 
 // TronWeb в CommonJS экспортируется по-разному в зависимости от версии/бандлера
 const TronWeb = (TronWebPkg as any).TronWeb || TronWebPkg;
@@ -11,7 +12,7 @@ export function getTronWeb() {
   if (tronWebInstance) return tronWebInstance;
   const apiKey = process.env.TRONGRID_API_KEY;
   tronWebInstance = new TronWeb({
-    fullHost: 'https://api.trongrid.io',
+    fullHost: tronFullHost(),
     headers: apiKey ? { 'TRON-PRO-API-KEY': apiKey } : undefined,
   });
   return tronWebInstance;
@@ -61,7 +62,7 @@ export function getMasterTronAccount(): TronAccount {
   return deriveTronAccount(0);
 }
 
-const USDT_TRC20_CONTRACT = process.env.USDT_TRC20_CONTRACT || 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+const USDT_TRC20_CONTRACT = usdtTrc20Contract();
 const USDT_DECIMALS = 6;
 
 /** Отдельный экземпляр TronWeb с конкретным приватным ключом — для подписи
@@ -71,7 +72,7 @@ const USDT_DECIMALS = 6;
 function tronWebWithKey(privateKeyHex: string) {
   const apiKey = process.env.TRONGRID_API_KEY;
   return new TronWeb({
-    fullHost: 'https://api.trongrid.io',
+    fullHost: tronFullHost(),
     headers: apiKey ? { 'TRON-PRO-API-KEY': apiKey } : undefined,
     privateKey: privateKeyHex,
   });
